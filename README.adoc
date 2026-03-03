@@ -1,0 +1,814 @@
+= Ansible Red Hat / Rocky Linux RPM Management Suite
+
+A production-ready Ansible playbook suite for managing RPM package updates and server reboots on Red Hat / Rocky Linux servers with robust error handling, detailed reporting, and flexible execution options.
+
+== 📦 Package Contents
+
+This package includes four files:
+
+. *update_rpms.yml* - Main playbook for checking and updating RPM packages
+. *reboot_servers.yml* - Standalone playbook for rebooting servers
+. *hosts.ini* - Server inventory configuration
+. *README.md* - This documentation file
+
+== ✨ Features
+
+=== Update Playbook (update_rpms.yml)
+
+* ✅ *Package Preview* - See what will be updated before making changes
+* ✅ *Tagged Execution* - Run specific parts with `--tags` option
+* ✅ *Continue on Failure* - Failed servers don't stop the entire run
+* ✅ *Root User + SSH Keys* - Secure authentication
+* ✅ *Clear Status Messages* - Emoji-based success/failure indicators
+* ✅ *Comprehensive Summary* - Statistics and results for all servers
+* ✅ *Reboot Detection* - Identifies when reboots are needed
+* ✅ *30-Minute Timeout* - Protection for long-running updates
+
+=== Reboot Playbook (reboot_servers.yml)
+
+* ✅ *Intelligent Reboot Detection* - Only reboots when necessary
+* ✅ *Pre/Post Status* - Shows uptime before and after reboot
+* ✅ *Connection Verification* - Ensures servers are accessible after reboot
+* ✅ *Continue on Failure* - Failed reboots don't affect other servers
+* ✅ *Detailed Reporting* - Clear summary of all reboot operations
+* ✅ *Skip Unnecessary Reboots* - Servers not needing reboot are skipped
+
+=== Prerequisites
+
+Ensure you have:
+
+* Ansible 2.9 or higher installed on your control machine
+* Root SSH access to all Rocky Linux target servers
+* SSH key-based authentication configured
+* Python 3 installed on target servers
+
+==== Configure Inventory
+
+Edit `hosts.ini` and replace sample servers with your actual servers:
+
+[source,ini]
+----
+[rocky_servers]
+your-server-01.domain.com ansible_host=YOUR_IP_HERE
+your-server-02.domain.com ansible_host=YOUR_IP_HERE
+----
+
+==== Run Your First Check
+
+[source,bash]
+----
+# Check what packages would be updated (no changes made)
+ansible-playbook -i hosts.ini update_rpms.yml --tags check
+----
+
+== 📖 Usage Guide
+
+=== Main Update Playbook (update_rpms.yml)
+
+==== Available Tags
+
+The playbook supports the following tags:
+
+* *check* - Check for available updates without making changes
+* *update* - Perform the actual package updates
+* *reboot* - Reboot servers that need it
+* *always* - Summary report (runs automatically)
+
+==== Usage Examples
+
+*1. Check Available Updates Only*
+
+[source,bash]
+----
+# See what packages are available for update
+ansible-playbook -i hosts.ini update_rpms.yml --tags check
+----
+
+*2. Update Packages Only (No Reboot)*
+
+[source,bash]
+----
+# Update all packages but don't reboot
+ansible-playbook -i hosts.ini update_rpms.yml --tags update
+----
+
+*3. Update and Reboot in One Command*
+
+[source,bash]
+----
+# Update packages and reboot if needed
+ansible-playbook -i hosts.ini update_rpms.yml --tags "update,reboot"
+----
+
+*4. Complete Workflow (Check, Update, Reboot)*
+
+[source,bash]
+----
+# Run all phases
+ansible-playbook -i hosts.ini update_rpms.yml --tags "check,update,reboot"
+----
+
+*5. Reboot Only (After Previous Update)*
+
+[source,bash]
+----
+# Just reboot servers that need it
+ansible-playbook -i hosts.ini update_rpms.yml --tags reboot
+----
+
+*6. Target Specific Servers*
+
+[source,bash]
+----
+# Update only specific servers
+ansible-playbook -i hosts.ini update_rpms.yml --tags update --limit remo-linux-servers-01.example.com
+----
+
+[source,bash]
+----
+# Update multiple specific servers
+ansible-playbook -i hosts.ini update_rpms.yml --tags update --limit "remo-linux-servers-01.example.com,rocky-prod-02.example.com"
+----
+
+*7. Dry Run (Check Mode)*
+
+[source,bash]
+----
+# See what would change without making actual changes
+ansible-playbook -i hosts.ini update_rpms.yml --check
+----
+
+*8. Verbose Output*
+
+[source,bash]
+----
+# Run with verbose output for debugging
+ansible-playbook -i hosts.ini update_rpms.yml --tags update -v
+ansible-playbook -i hosts.ini update_rpms.yml --tags update -vv  # More verbose
+ansible-playbook -i hosts.ini update_rpms.yml --tags update -vvv # Very verbose
+----
+
+=== Reboot Playbook (reboot_servers.yml)
+
+This standalone playbook is for rebooting servers independently of the update process.
+
+==== Usage Examples
+
+*1. Basic Reboot*
+
+[source,bash]
+----
+# Reboot all servers that need it
+ansible-playbook -i hosts.ini reboot_servers.yml
+----
+
+*2. Force Reboot Specific Servers*
+
+[source,bash]
+----
+# Reboot only specific servers
+ansible-playbook -i hosts.ini reboot_servers.yml --limit remo-linux-servers-01.example.com
+----
+
+*3. Dry Run*
+
+[source,bash]
+----
+# Check which servers would be rebooted
+ansible-playbook -i hosts.ini reboot_servers.yml --check
+----
+
+*4. Verbose Output*
+
+[source,bash]
+----
+# See detailed reboot process
+ansible-playbook -i hosts.ini reboot_servers.yml -v
+----
+
+== 🔄 Recommended Workflows
+
+=== Workflow 1: Safe Staged Updates (Recommended for Production)
+
+[source,bash]
+----
+# Step 1: Check what will be updated
+ansible-playbook -i hosts.ini update_rpms.yml --tags check
+----
+
+Review the output, then proceed if acceptable:
+
+[source,bash]
+----
+# Step 2: Update packages without reboot
+ansible-playbook -i hosts.ini update_rpms.yml --tags update
+----
+
+Services continue running with old packages loaded in memory:
+
+[source,bash]
+----
+# Step 3: Schedule reboot during maintenance window
+ansible-playbook -i hosts.ini update_rpms.yml --tags reboot
+# OR use the separate reboot playbook
+ansible-playbook -i hosts.ini reboot_servers.yml
+----
+
+=== Workflow 2: Quick Updates with Immediate Reboot
+
+[source,bash]
+----
+# All-in-one: check, update, and reboot
+ansible-playbook -i hosts.ini update_rpms.yml --tags "check,update,reboot"
+----
+
+=== Workflow 3: Rolling Updates (One Server at a Time)
+
+[source,bash]
+----
+# Update servers one by one
+for server in remo-linux-servers-01 rocky-prod-02 rocky-prod-03; do
+  echo "Updating $server..."
+  ansible-playbook -i hosts.ini update_rpms.yml --tags "update,reboot" --limit $server
+  echo "Waiting 60 seconds before next server..."
+  sleep 60
+done
+----
+
+=== Workflow 4: Emergency Security Patch
+
+[source,bash]
+----
+# Quick security update without pre-check
+ansible-playbook -i hosts.ini update_rpms.yml --tags update
+----
+
+=== Workflow 5: Scheduled Maintenance
+
+[source,bash]
+----
+# Schedule via cron for regular updates
+# Add to crontab: crontab -e
+
+# Every Sunday at 2 AM - check and update
+0 2 * * 0 /usr/bin/ansible-playbook -i /path/to/hosts.ini /path/to/update_rpms.yml --tags "check,update" >> /var/log/ansible-updates.log 2>&1
+
+# Every Sunday at 3 AM - reboot if needed
+0 3 * * 0 /usr/bin/ansible-playbook -i /path/to/hosts.ini /path/to/reboot_servers.yml >> /var/log/ansible-reboots.log 2>&1
+----
+
+== 📊 Understanding Output
+
+=== Successful Update Output
+
+[source]
+----
+╔════════════════════════════════════════════════════════════╗
+║ CHECKING FOR AVAILABLE RPM UPDATES                        ║
+║ Host: remo-linux-servers-01.example.com                           ║
+╚════════════════════════════════════════════════════════════╝
+
+📦 PACKAGES AVAILABLE FOR UPDATE on remo-linux-servers-01.example.com:
+────────────────────────────────────────────────────────────
+kernel.x86_64          5.14.0-284.el9    baseos
+openssl-libs.x86_64    3.0.7-16.el9      baseos
+systemd.x86_64         252-14.el9        baseos
+────────────────────────────────────────────────────────────
+Total packages to update: 3
+
+🔄 Starting RPM update on remo-linux-servers-01.example.com
+
+════════════════════════════════════════════════════════════
+Host: remo-linux-servers-01.example.com
+Status: SUCCESS
+✅ All packages updated successfully
+Packages changed: 3
+════════════════════════════════════════════════════════════
+
+⚠️ REBOOT REQUIRED on remo-linux-servers-01.example.com - Kernel or system packages were updated
+
+╔════════════════════════════════════════════════════════════╗
+║ ROCKY LINUX RPM UPDATE SUMMARY REPORT                     ║
+╚════════════════════════════════════════════════════════════╝
+
+✅ SUCCESS: remo-linux-servers-01.example.com
+✅ SUCCESS: rocky-prod-02.example.com
+
+════════════════════════════════════════════════════════════
+STATISTICS:
+  Total Hosts: 2
+  Successful Updates: 2
+  Failed Updates: 0
+  Servers Needing Reboot: 2
+  Success Rate: 100.0%
+════════════════════════════════════════════════════════════
+----
+
+=== Failed Update Output
+
+[source]
+----
+🔄 Starting RPM update on rocky-prod-03.example.com
+
+════════════════════════════════════════════════════════════
+Host: rocky-prod-03.example.com
+Status: FAILED
+❌ Package update failed: Connection timeout
+Packages changed: 0
+════════════════════════════════════════════════════════════
+
+╔════════════════════════════════════════════════════════════╗
+║ ROCKY LINUX RPM UPDATE SUMMARY REPORT                     ║
+╚════════════════════════════════════════════════════════════╝
+
+✅ SUCCESS: remo-linux-servers-01.example.com
+✅ SUCCESS: rocky-prod-02.example.com
+❌ FAILED: rocky-prod-03.example.com
+
+════════════════════════════════════════════════════════════
+STATISTICS:
+  Total Hosts: 3
+  Successful Updates: 2
+  Failed Updates: 1
+  Servers Needing Reboot: 2
+  Success Rate: 66.67%
+════════════════════════════════════════════════════════════
+----
+
+=== Reboot Playbook Output
+
+[source]
+----
+╔════════════════════════════════════════════════════════════╗
+║ ROCKY LINUX SERVER REBOOT UTILITY                         ║
+║ Host: remo-linux-servers-01.example.com                           ║
+╚════════════════════════════════════════════════════════════╝
+
+🔍 Reboot Check Results for remo-linux-servers-01.example.com:
+  Reboot Needed: YES
+  Reason: kernel mismatch - running: 5.14.0-162, latest: 5.14.0-284
+
+📊 PRE-REBOOT STATUS:
+  Server: remo-linux-servers-01.example.com
+  Current uptime: up 45 days, 3 hours, 22 minutes
+  Last boot: 2024-01-05 08:15:32
+  Reason for reboot: kernel mismatch
+
+🔄 Initiating reboot...
+
+✅ REBOOT SUCCESSFUL
+  Server: remo-linux-servers-01.example.com
+  New uptime: up 2 minutes
+  New boot time: 2024-02-20 14:30:45
+  Server is fully accessible
+
+╔════════════════════════════════════════════════════════════╗
+║ SERVER REBOOT SUMMARY REPORT                              ║
+╚════════════════════════════════════════════════════════════╝
+
+✅ REBOOTED SUCCESSFULLY: remo-linux-servers-01.example.com
+⏭️ SKIPPED (no reboot needed): rocky-prod-02.example.com
+
+════════════════════════════════════════════════════════════
+REBOOT STATISTICS:
+  Total Hosts: 2
+  Successfully Rebooted: 1
+  Failed Reboots: 0
+  Skipped (no reboot needed): 1
+  Success Rate: 100.0%
+════════════════════════════════════════════════════════════
+----
+
+== 🔧 Troubleshooting
+
+=== Issue 1: Permission Denied (publickey)
+
+*Symptoms:*
+
+[source]
+----
+
+
+=== Issue 2: Host Unreachable
+
+*Symptoms:*
+
+[source]
+----
+fatal: [remo-linux-servers-01]: UNREACHABLE! => {"msg": "Failed to connect to the host via ssh: Connection timed out"}
+----
+
+*Solutions:*
+
+[source,bash]
+----
+# Verify network connectivity
+ping 192.168.1.10
+
+# Check if SSH service is running
+ssh root@192.168.1.10 'systemctl status sshd'
+
+# Check firewall rules
+ssh root@192.168.1.10 'firewall-cmd --list-all'
+
+# Allow SSH through firewall if needed
+ssh root@192.168.1.10 'firewall-cmd --permanent --add-service=ssh && firewall-cmd --reload'
+
+# Verify correct IP in hosts.ini
+cat hosts.ini | grep 192.168.1.10
+
+# Test with increased timeout
+ansible rocky_servers -i hosts.ini -m ping -e 'ansible_ssh_timeout=60'
+----
+
+Issue 3: DNF Lock Error
+
+*Symptoms:*
+
+[source]
+----
+Waiting for process with pid 12345 to finish
+Another application is currently holding the dnf lock
+----
+
+*Solutions:*
+
+[source,bash]
+----
+# SSH to the problematic server
+ssh root@192.168.1.10
+
+# Check for running DNF/YUM processes
+ps aux | grep -E 'dnf|yum'
+
+# If safe, kill stuck processes
+killall dnf
+killall yum
+
+# Remove stale lock files
+rm -f /var/run/dnf.pid
+rm -f /var/cache/dnf/*/metalink.xml
+
+# Clear DNF cache
+dnf clean all
+
+# Re-run the playbook
+----
+
+Issue 4: Python Interpreter Not Found
+
+*Symptoms:*
+
+[source]
+----
+fatal: [remo-linux-servers-01]: FAILED! => {"msg": "/usr/bin/python: not found"}
+----
+
+*Solutions:*
+
+[source,bash]
+----
+# Install Python 3 on target server
+ssh root@192.168.1.10 'dnf install -y python3'
+
+# Update hosts.ini with correct Python path
+# Add to [rocky_servers:vars]:
+ansible_python_interpreter=/usr/bin/python3
+
+# Or specify different version
+ansible_python_interpreter=/usr/bin/python3.9
+----
+
+Issue 5: Playbook Hangs During Updates
+
+*Symptoms:*
+
+* Playbook stops responding during package updates
+* No output for extended period
+
+*Solutions:*
+
+[source,bash]
+----
+# Press Ctrl+C to cancel
+
+# Run with verbose mode to see what's happening
+ansible-playbook -i hosts.ini update_rpms.yml --tags update -vvv
+
+# Check the problematic server manually
+ssh root@192.168.1.10
+top    # Check CPU usage
+dnf update    # Try manual update
+
+# Increase the timeout in update_rpms.yml
+# Change: update_timeout: 1800
+# To: update_timeout: 3600  # 1 hour
+----
+
+Issue 6: Reboot Never Completes
+
+*Symptoms:*
+
+[source]
+----
+fatal: [remo-linux-servers-01]: FAILED! => {"msg": "Timed out waiting for post_reboot_delay"}
+----
+
+*Solutions:*
+
+[source,bash]
+----
+# Check if server is actually online
+ping 192.168.1.10
+
+# Try manual SSH connection
+ssh root@192.168.1.10
+
+# Check console if available (IPMI, iLO, iDRAC, etc.)
+
+# Increase reboot timeout in playbook
+# In reboot task, change:
+# reboot_timeout: 600  # to 1200 (20 minutes)
+
+# Check for stuck boot process
+# May need physical or remote console access
+----
+
+Issue 7: "No package updates available" but updates exist
+
+*Symptoms:*
+
+* Manual `dnf check-update` shows updates
+* Playbook reports no updates available
+
+*Solutions:*
+
+[source,bash]
+----
+# Clear DNF cache on target
+ssh root@192.168.1.10 'dnf clean all && dnf makecache'
+
+# Force cache update in playbook
+# Already included in update task
+
+# Check DNF repo configuration
+ssh root@192.168.1.10 'dnf repolist'
+
+# Ensure repos are enabled
+ssh root@192.168.1.10 'dnf config-manager --set-enabled baseos appstream'
+----
+
+== 🔐 Security Best Practices
+
+1. SSH Key Management
+
+[source,bash]
+----
+# Use a dedicated key for Ansible
+ssh-keygen -t rsa -b 4096 -C "ansible-only" -f ~/.ssh/ansible_id_rsa
+
+# Update hosts.ini
+ansible_ssh_private_key_file=~/.ssh/ansible_id_rsa
+
+# Restrict key permissions
+chmod 600 ~/.ssh/ansible_id_rsa
+
+# Use SSH agent for password-protected keys
+eval $(ssh-agent)
+ssh-add ~/.ssh/ansible_id_rsa
+----
+
+2. Inventory File Security
+
+[source,bash]
+----
+# Restrict inventory file permissions
+chmod 600 hosts.ini
+
+# Store sensitive inventory in encrypted format
+ansible-vault encrypt hosts.ini
+
+# Use vault when running playbooks
+ansible-playbook -i hosts.ini update_rpms.yml --ask-vault-pass
+
+# Or use vault password file
+ansible-playbook -i hosts.ini update_rpms.yml --vault-password-file ~/.ansible_vault_pass
+----
+
+3. Use Jump Host for Production
+
+For production servers behind a bastion/jump host:
+
+[source,ini]
+----
+# In hosts.ini
+[rocky_servers:vars]
+ansible_ssh_common_args='-o ProxyCommand="ssh -W %h:%p -q jump-user@jump-host.example.com"'
+----
+
+4. Enable StrictHostKeyChecking in Production
+
+[source,bash]
+----
+# In hosts.ini, replace:
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+# With:
+ansible_ssh_common_args='-o StrictHostKeyChecking=yes'
+
+# Then populate known_hosts:
+for host in 192.168.1.10 192.168.1.11 192.168.1.12; do
+  ssh-keyscan -H $host >> ~/.ssh/known_hosts
+done
+----
+
+5. Audit Logging
+
+[source,bash]
+----
+# Enable Ansible logging
+# Add to ansible.cfg or set environment variable
+export ANSIBLE_LOG_PATH=/var/log/ansible/playbook.log
+
+# Create log directory
+mkdir -p /var/log/ansible
+chmod 750 /var/log/ansible
+
+# Rotate logs
+cat > /etc/logrotate.d/ansible << EOF
+/var/log/ansible/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+}
+EOF
+----
+
+== 📚 Advanced Usage
+
+=== Customize Update Behavior
+
+Edit `update_rpms.yml` to modify update behavior:
+
+*Update only security patches:*
+
+[source,yaml]
+----
+- name: Update security patches only
+  dnf:
+    name: "*"
+    state: latest
+    security: yes
+    update_cache: yes
+----
+
+*Exclude specific packages:*
+
+[source,yaml]
+----
+- name: Update all except kernel
+  dnf:
+    name: "*"
+    state: latest
+    exclude: kernel*
+    update_cache: yes
+----
+
+*Update specific packages only:*
+
+[source,yaml]
+----
+- name: Update specific packages
+  dnf:
+    name:
+      - nginx
+      - postgresql
+      - python3
+    state: latest
+----
+
+=== Add Email Notifications
+
+Install required package:
+
+[source,bash]
+----
+dnf install -y mailx
+----
+
+Add to playbook:
+
+[source,yaml]
+----
+- name: Send email notification
+  mail:
+    host: smtp.example.com
+    port: 587
+    username: notifications@example.com
+    password: "{{ email_password }}"
+    to: admin@example.com
+    subject: "Ansible Update Report - {{ inventory_hostname }}"
+    body: "Update Status: {{ update_status }}"
+  delegate_to: localhost
+  run_once: true
+----
+
+Integration with Monitoring Systems
+
+*Prometheus/Alertmanager:*
+
+[source,yaml]
+----
+- name: Send metric to Pushgateway
+  uri:
+    url: "http://pushgateway.example.com:9091/metrics/job/ansible_updates"
+    method: POST
+    body: |
+      ansible_update_success{host="{{ inventory_hostname }}"} {{ 1 if update_status == "SUCCESS" else 0 }}
+    status_code: 200
+  delegate_to: localhost
+----
+
+*Slack Notifications:*
+
+[source,yaml]
+----
+- name: Send Slack notification
+  slack:
+    token: "{{ slack_token }}"
+    msg: "✅ Updates completed on {{ inventory_hostname }}"
+    channel: "#infrastructure"
+  delegate_to: localhost
+  when: update_status == "SUCCESS"
+----
+
+📋 Maintenance Schedule Recommendations
+
+Weekly Updates (Low-Risk Systems)
+
+[source,bash]
+----
+# Cron job: Every Sunday at 2 AM
+0 2 * * 0 cd /opt/ansible && /usr/bin/ansible-playbook -i hosts.ini update_rpms.yml --tags "update,reboot"
+----
+
+Monthly Updates (Production Systems)
+
+[source,bash]
+----
+# First Sunday of month at 3 AM
+0 3 1-7 * 0 cd /opt/ansible && /usr/bin/ansible-playbook -i hosts.ini update_rpms.yml --tags update
+
+# First Sunday of month at 4 AM (reboot)
+0 4 1-7 * 0 cd /opt/ansible && /usr/bin/ansible-playbook -i hosts.ini reboot_servers.yml
+----
+
+Emergency Security Updates
+
+[source,bash]
+----
+# Check for security updates daily
+0 6 * * * cd /opt/ansible && /usr/bin/ansible-playbook -i hosts.ini update_rpms.yml --tags check | grep -i security && echo "Security updates available"
+----
+
+🆘 Support and Resources
+
+Official Documentation
+
+* https://docs.ansible.com/[Ansible Documentation]
+* https://docs.rockylinux.org/[Rocky Linux Documentation]
+* https://docs.ansible.com/ansible/latest/collections/ansible/builtin/dnf_module.html[DNF Module Reference]
+* https://docs.ansible.com/ansible/latest/collections/ansible/builtin/reboot_module.html[Reboot Module Reference]
+
+Community Resources
+
+* https://forums.rockylinux.org/[Rocky Linux Forums]
+* https://forum.ansible.com/[Ansible Community Forum]
+* https://reddit.com/r/RockyLinux[Rocky Linux Reddit]
+
+Getting Help
+
+If you encounter issues:
+
+. Run with verbose mode: `-vvv`
+. Check `/var/log/messages` on target servers
+. Verify network connectivity and SSH access
+. Review the troubleshooting section above
+
+📄 License
+
+These playbooks are provided as-is for use in your infrastructure. Feel free to modify and adapt to your needs.
+
+🔄 Version History
+
+* *v1.0* (2024-02-20) - Initial release
+** Basic update and reboot functionality
+** Tag support for flexible execution
+** Comprehensive error handling and reporting
+
+*Created for Rocky Linux 8 and 9* +
+*Tested with Ansible 2.9+* +
+*Last Updated: February 20, 2024*
