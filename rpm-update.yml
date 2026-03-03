@@ -1,0 +1,297 @@
+# ============================================
+# FILE 1: update_rpms.yml
+# ============================================
+---
+- name: Check available RPM updates
+  hosts: rocky_servers
+  remote_user: root
+  gather_facts: yes
+  any_errors_fatal: false
+  tags: check
+
+  tasks:
+    - name: Display header for package check
+      debug:
+        msg:
+          - ""
+          - "╔════════════════════════════════════════════════════════════╗"
+          - "║          CHECKING FOR AVAILABLE RPM UPDATES                ║"
+          - "║          Host: {{ inventory_hostname }}                    "
+          - "╚════════════════════════════════════════════════════════════╝"
+
+    - name: Check for available package updates
+      command: dnf check-update
+      register: check_updates
+      failed_when: false
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Parse available updates
+      set_fact:
+        available_updates: "{{ check_updates.stdout_lines | select('match', '^[a-zA-Z0-9]') | list }}"
+        update_count: "{{ check_updates.stdout_lines | select('match', '^[a-zA-Z0-9]') | list | length }}"
+      when: check_updates.rc == 100
+
+    - name: Display packages to be updated
+      debug:
+        msg:
+          - ""
+          - "📦 PACKAGES AVAILABLE FOR UPDATE on {{ inventory_hostname }}:"
+          - "────────────────────────────────────────────────────────────"
+          - "{{ available_updates | default(['No updates available']) | join('\n') }}"
+          - "────────────────────────────────────────────────────────────"
+          - "Total packages to update: {{ update_count | default(0) }}"
+          - ""
+      when: check_updates is defined
+
+    - name: No updates available message
+      debug:
+        msg: "✅ {{ inventory_hostname }} - All packages are up to date!"
+      when: check_updates.rc == 0
+
+- name: Update Red Hat / Rocky Linux RPM packages
+  hosts: rocky_servers
+  remote_user: root
+  gather_facts: yes
+  any_errors_fatal: false
+  tags: update
+
+  vars:
+    update_timeout: 1800
+
+  tasks:
+    - name: Display starting update message
+      debug:
+        msg:
+          - ""
+          - "🔄 Starting RPM update on {{ inventory_hostname }}"
+          - ""
+
+    - name: Update DNF cache
+      dnf:
+        update_cache: yes
+      register: cache_update
+      ignore_errors: yes
+
+    - name: Update all RPM packages
+      dnf:
+        name: "*"
+        state: latest
+        update_cache: yes
+      register: rpm_update_result
+      ignore_errors: yes
+      async: "{{ update_timeout }}"
+      poll: 10
+
+    - name: Record success for this host
+      set_fact:
+        update_status: "SUCCESS"
+        update_message: "✅ All packages updated successfully on {{ inventory_hostname }}"
+        packages_changed: "{{ rpm_update_result.results | default([]) | length if rpm_update_result.results is defined else 0 }}"
+      when: rpm_update_result is succeeded
+
+    - name: Record failure for this host
+      set_fact:
+        update_status: "FAILED"
+        update_message: "❌ Package update failed on {{ inventory_hostname }}: {{ rpm_update_result.msg | default('Unknown error') }}"
+        packages_changed: 0
+      when: rpm_update_result is failed
+
+    - name: Display individual host update result
+      debug:
+        msg:
+          - ""
+          - "════════════════════════════════════════════════════════════"
+          - "Host: {{ inventory_hostname }}"
+          - "Status: {{ update_status }}"
+          - "{{ update_message }}"
+          - "Packages changed: {{ packages_changed }}"
+          - "════════════════════════════════════════════════════════════"
+          - ""
+
+    - name: Check if reboot is required
+      shell: |
+        needs_reboot=0
+
+        # Check for reboot-required file
+        if [ -f /var/run/reboot-required ]; then
+          needs_reboot=1
+        fi
+
+        # Check if kernel was updated today
+        if rpm -q --last kernel | head -1 | grep "$(date +%a)" >/dev/null 2>&1; then
+          needs_reboot=1
+        fi
+
+        # Check for running kernel vs installed
+        current_kernel=$(uname -r)
+        latest_kernel=$(rpm -q kernel --last | head -1 | awk '{print $1}' | sed 's/kernel-//')
+        if [ "$current_kernel" != "$latest_kernel" ]; then
+          needs_reboot=1
+        fi
+
+        if [ $needs_reboot -eq 1 ]; then
+          echo "reboot_required"
+        else
+          echo "reboot_not_required"
+        fi
+      register: reboot_check
+      changed_when: false
+      ignore_errors: yes
+      when: rpm_update_result is succeeded
+
+    - name: Set reboot requirement fact
+      set_fact:
+        needs_reboot: "{{ 'reboot_required' in reboot_check.stdout }}"
+      when:
+        - rpm_update_result is succeeded
+        - reboot_check is defined
+
+    - name: Display reboot requirement
+      debug:
+        msg: "⚠️  REBOOT REQUIRED on {{ inventory_hostname }} - Kernel or system packages were updated"
+      when:
+        - rpm_update_result is succeeded
+        - reboot_check is defined
+        - needs_reboot | default(false)
+
+- name: Reboot servers if needed
+  hosts: rocky_servers
+  remote_user: root
+  gather_facts: no
+  any_errors_fatal: false
+  tags: reboot
+
+  tasks:
+    - name: Check if reboot flag exists
+      debug:
+        msg: "🔄 Checking reboot requirement for {{ inventory_hostname }}"
+
+    - name: Skip servers that don't need reboot
+      debug:
+        msg: "✅ {{ inventory_hostname }} does not require reboot"
+      when: not (needs_reboot | default(false))
+
+    - name: Get uptime before reboot
+      command: uptime
+      register: uptime_before
+      changed_when: false
+      when: needs_reboot | default(false)
+
+    - name: Display pre-reboot uptime
+      debug:
+        msg: "📊 Uptime before reboot: {{ uptime_before.stdout }}"
+      when: needs_reboot | default(false)
+
+    - name: Reboot the server
+      reboot:
+        msg: "Rebooting {{ inventory_hostname }} after package updates"
+        connect_timeout: 5
+        reboot_timeout: 600
+        pre_reboot_delay: 0
+        post_reboot_delay: 30
+        test_command: uptime
+      register: reboot_result
+      ignore_errors: yes
+      when: needs_reboot | default(false)
+
+    - name: Wait for server to come back online
+      wait_for_connection:
+        connect_timeout: 20
+        sleep: 5
+        delay: 5
+        timeout: 300
+      register: connection_result
+      ignore_errors: yes
+      when: needs_reboot | default(false)
+
+    - name: Get uptime after reboot
+      command: uptime
+      register: uptime_after
+      changed_when: false
+      ignore_errors: yes
+      when: needs_reboot | default(false)
+
+    - name: Display post-reboot status
+      debug:
+        msg:
+          - "✅ {{ inventory_hostname }} rebooted successfully"
+          - "📊 Uptime after reboot: {{ uptime_after.stdout }}"
+      when:
+        - needs_reboot | default(false)
+        - reboot_result is succeeded
+        - uptime_after is defined
+
+    - name: Record reboot failure
+      debug:
+        msg: "❌ Failed to reboot {{ inventory_hostname }}"
+      when:
+        - needs_reboot | default(false)
+        - reboot_result is failed
+
+- name: Generate update summary report
+  hosts: rocky_servers
+  remote_user: root
+  gather_facts: no
+  any_errors_fatal: false
+  tags: always
+
+  tasks:
+    - name: Display summary header
+      debug:
+        msg:
+          - ""
+          - "╔════════════════════════════════════════════════════════════╗"
+          - "║         ROCKY LINUX RPM UPDATE SUMMARY REPORT              ║"
+          - "╚════════════════════════════════════════════════════════════╝"
+      run_once: true
+      delegate_to: localhost
+
+    - name: Display successful updates
+      debug:
+        msg: "✅ SUCCESS: {{ item }}"
+      loop: "{{ groups['rocky_servers'] }}"
+      when: hostvars[item].update_status | default('UNKNOWN') == 'SUCCESS'
+      run_once: true
+      delegate_to: localhost
+
+    - name: Display failed updates
+      debug:
+        msg: "❌ FAILED: {{ item }}"
+      loop: "{{ groups['rocky_servers'] }}"
+      when: hostvars[item].update_status | default('UNKNOWN') == 'FAILED'
+      run_once: true
+      delegate_to: localhost
+
+    - name: Display reboot status
+      debug:
+        msg: "⚠️  NEEDS REBOOT: {{ item }}"
+      loop: "{{ groups['rocky_servers'] }}"
+      when: hostvars[item].needs_reboot | default(false)
+      run_once: true
+      delegate_to: localhost
+
+    - name: Calculate statistics
+      set_fact:
+        total_hosts: "{{ groups['rocky_servers'] | length }}"
+        successful_hosts: "{{ groups['rocky_servers'] | map('extract', hostvars, 'update_status') | select('defined') | select('equalto', 'SUCCESS') | list | length }}"
+        failed_hosts: "{{ groups['rocky_servers'] | map('extract', hostvars, 'update_status') | select('defined') | select('equalto', 'FAILED') | list | length }}"
+        reboot_needed_count: "{{ groups['rocky_servers'] | map('extract', hostvars, 'needs_reboot') | select('defined') | select('equalto', true) | list | length }}"
+      run_once: true
+      delegate_to: localhost
+
+    - name: Display final statistics
+      debug:
+        msg:
+          - ""
+          - "════════════════════════════════════════════════════════════"
+          - "STATISTICS:"
+          - "  Total Hosts: {{ total_hosts }}"
+          - "  Successful Updates: {{ successful_hosts }}"
+          - "  Failed Updates: {{ failed_hosts }}"
+          - "  Servers Needing Reboot: {{ reboot_needed_count }}"
+          - "  Success Rate: {{ ((successful_hosts | int / total_hosts | int) * 100) | round(2) }}%"
+          - "════════════════════════════════════════════════════════════"
+          - ""
+      run_once: true
+      delegate_to: localhost
