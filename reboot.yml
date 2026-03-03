@@ -1,0 +1,251 @@
+# ============================================
+# FILE 2: reboot_servers.yml
+# ============================================
+---
+- name: Reboot Red Hat /  Rocky Linux servers
+  hosts: rocky_servers
+  remote_user: root
+  gather_facts: yes
+  any_errors_fatal: false
+
+  tasks:
+    - name: Display reboot check header
+      debug:
+        msg:
+          - ""
+          - "╔═════════════════════════════���═══════════════════�═════════╗"
+          - "║            Red Hat / ROCKY LINUX SERVER REBOOT UTILITY               ║"
+          - "���            Host: {{ inventory_hostname }}                  "
+          - "╚═════════════════════════════════════���═══════════════════�═╝"
+          - ""
+
+    - name: Check if reboot is needed
+      shell: |
+        needs_reboot=0
+        reason=""
+
+        # Check for reboot-required file
+        if [ -f /var/run/reboot-required ]; then
+          needs_reboot=1
+          reason="reboot-required file exists"
+        fi
+
+        # Check if kernel was recently updated
+        if rpm -q --last kernel | head -1 | grep -E "$(date +%a)|$(date -d yesterday +%a)" >/dev/null 2>&1; then
+          needs_reboot=1
+          reason="kernel recently updated"
+        fi
+
+        # Check for running kernel vs installed kernel
+        current_kernel=$(uname -r)
+        latest_kernel=$(rpm -q kernel --last | head -1 | awk '{print $1}' | sed 's/kernel-//')
+
+        if [ "$current_kernel" != "$latest_kernel" ]; then
+          needs_reboot=1
+          reason="kernel mismatch - running: $current_kernel, latest: $latest_kernel"
+        fi
+
+        # Check for processes requiring restart (needs-restarting from yum-utils)
+        if command -v needs-restarting >/dev/null 2>&1; then
+          if needs-restarting -r >/dev/null 2>&1; then
+            : # No reboot needed
+          else
+            needs_reboot=1
+            if [ -z "$reason" ]; then
+              reason="system services need restart"
+            fi
+          fi
+        fi
+
+        echo "$needs_reboot|$reason"
+      register: reboot_check
+      changed_when: false
+      failed_when: false
+
+    - name: Parse reboot check results
+      set_fact:
+        needs_reboot: "{{ reboot_check.stdout.split('|')[0] == '1' }}"
+        reboot_reason: "{{ reboot_check.stdout.split('|')[1] | default('Unknown reason') }}"
+
+    - name: Display reboot status
+      debug:
+        msg:
+          - "🔍 Reboot Check Results for {{ inventory_hostname }}:"
+          - "  Reboot Needed: {{ 'YES' if needs_reboot else 'NO' }}"
+          - "  Reason: {{ reboot_reason if needs_reboot else 'System is up to date' }}"
+
+    - name: Skip servers that don't need reboot
+      debug:
+        msg: "✅ {{ inventory_hostname }} - No reboot required, skipping..."
+      when: not needs_reboot
+
+    - name: Get current uptime before reboot
+      command: uptime -p
+      register: uptime_before
+      changed_when: false
+      when: needs_reboot
+
+    - name: Get last boot time
+      command: who -b
+      register: last_boot
+      changed_when: false
+      when: needs_reboot
+
+    - name: Display pre-reboot information
+      debug:
+        msg:
+          - ""
+          - "📊 PRE-REBOOT STATUS:"
+          - "  Server: {{ inventory_hostname }}"
+          - "  Current uptime: {{ uptime_before.stdout }}"
+          - "  Last boot: {{ last_boot.stdout }}"
+          - "  Reason for reboot: {{ reboot_reason }}"
+          - ""
+          - "🔄 Initiating reboot..."
+      when: needs_reboot
+
+    - name: Reboot the server
+      reboot:
+        msg: "Server reboot initiated by Ansible - {{ reboot_reason }}"
+        connect_timeout: 5
+        reboot_timeout: 600
+        pre_reboot_delay: 5
+        post_reboot_delay: 30
+        test_command: uptime
+      register: reboot_result
+      ignore_errors: yes
+      when: needs_reboot
+
+    - name: Record reboot status
+      set_fact:
+        reboot_status: "{{ 'SUCCESS' if reboot_result is succeeded else 'FAILED' }}"
+      when: needs_reboot
+
+    - name: Set skip status for servers that didn't need reboot
+      set_fact:
+        reboot_status: "SKIPPED"
+      when: not needs_reboot
+
+    - name: Wait for server to be fully responsive
+      wait_for_connection:
+        connect_timeout: 20
+        sleep: 5
+        delay: 10
+        timeout: 300
+      register: connection_check
+      ignore_errors: yes
+      when: needs_reboot and reboot_result is succeeded
+
+    - name: Verify server is accessible after reboot
+      command: hostname
+      register: hostname_check
+      changed_when: false
+      ignore_errors: yes
+      when: needs_reboot and reboot_result is succeeded
+
+    - name: Get uptime after reboot
+      command: uptime -p
+      register: uptime_after
+      changed_when: false
+      ignore_errors: yes
+      when: needs_reboot and reboot_result is succeeded
+
+    - name: Get new boot time
+      command: who -b
+      register: new_boot
+      changed_when: false
+      ignore_errors: yes
+      when: needs_reboot and reboot_result is succeeded
+
+    - name: Display post-reboot success
+      debug:
+        msg:
+          - ""
+          - "✅ REBOOT SUCCESSFUL"
+          - "  Server: {{ inventory_hostname }}"
+          - "  New uptime: {{ uptime_after.stdout }}"
+          - "  New boot time: {{ new_boot.stdout }}"
+          - "  Server is fully accessible"
+          - ""
+      when:
+        - needs_reboot
+        - reboot_result is succeeded
+        - hostname_check is succeeded
+
+    - name: Display reboot failure
+      debug:
+        msg:
+          - ""
+          - "❌ REBOOT FAILED"
+          - "  Server: {{ inventory_hostname }}"
+          - "  Error: {{ reboot_result.msg | default('Unknown error') }}"
+          - ""
+      when:
+        - needs_reboot
+        - reboot_result is failed
+
+- name: Generate reboot summary
+  hosts: rocky_servers
+  remote_user: root
+  gather_facts: no
+  any_errors_fatal: false
+
+  tasks:
+    - name: Display summary header
+      debug:
+        msg:
+          - ""
+          - "╔═══════════════════���═══════════════════�═══════════════════╗"
+          - "║              SERVER REBOOT SUMMARY REPORT                  ║"
+          - "╚══════════��═════════════════════════════════════════���══════╝"
+      run_once: true
+      delegate_to: localhost
+
+    - name: Display successful reboots
+      debug:
+        msg: "✅ REBOOTED SUCCESSFULLY: {{ item }}"
+      loop: "{{ groups['rocky_servers'] }}"
+      when: hostvars[item].reboot_status | default('UNKNOWN') == 'SUCCESS'
+      run_once: true
+      delegate_to: localhost
+
+    - name: Display failed reboots
+      debug:
+        msg: "❌ REBOOT FAILED: {{ item }}"
+      loop: "{{ groups['rocky_servers'] }}"
+      when: hostvars[item].reboot_status | default('UNKNOWN') == 'FAILED'
+      run_once: true
+      delegate_to: localhost
+
+    - name: Display skipped servers
+      debug:
+        msg: "⏭️  SKIPPED (no reboot needed): {{ item }}"
+      loop: "{{ groups['rocky_servers'] }}"
+      when: hostvars[item].reboot_status | default('UNKNOWN') == 'SKIPPED'
+      run_once: true
+      delegate_to: localhost
+
+    - name: Calculate reboot statistics
+      set_fact:
+        total_hosts: "{{ groups['rocky_servers'] | length }}"
+        successful_reboots: "{{ groups['rocky_servers'] | map('extract', hostvars, 'reboot_status') | select('defined') | select('equalto', 'SUCCESS') | list | length }}"
+        failed_reboots: "{{ groups['rocky_servers'] | map('extract', hostvars, 'reboot_status') | select('defined') | select('equalto', 'FAILED') | list | length }}"
+        skipped_reboots: "{{ groups['rocky_servers'] | map('extract', hostvars, 'reboot_status') | select('defined') | select('equalto', 'SKIPPED') | list | length }}"
+      run_once: true
+      delegate_to: localhost
+
+    - name: Display final statistics
+      debug:
+        msg:
+          - ""
+          - "══════════════════════════════════���═══════════════════�════"
+          - "REBOOT STATISTICS:"
+          - "  Total Hosts: {{ total_hosts }}"
+          - "  Successfully Rebooted: {{ successful_reboots }}"
+          - "  Failed Reboots: {{ failed_reboots }}"
+          - "  Skipped (no reboot needed): {{ skipped_reboots }}"
+          - "  Success Rate: {{ ((successful_reboots | int / (total_hosts | int - skipped_reboots | int)) * 100) | round(2) if (total_hosts | int - skipped_reboots | int) > 0 else 0 }}%"
+          - "═══════════���═══════════════════�══════════════════════════"
+          - ""
+      run_once: true
+      delegate_to: localhost
